@@ -16,7 +16,7 @@ const SPEED_START = 18, SPEED_MAX = 60, ACCEL_K = 0.016; // 指数的に最高�
 const ONCOMING = 8;            // 向かってくる車・自転車そのものの速さ
 const SPAWN_Z = -180, BEHIND_Z = 16;
 const LIVES_START = 3, INVINCIBLE_SEC = 1.3;
-const FOLLOW = 9;              // 指への追いつきの速さ（大きいほどピッタリ、小さいほど遅れる）
+const FOLLOW_W = 7.5;          // 指へ引っ張られる強さ（小さいほど重く、動き出しが遅れる）
 const PLAYER_HALF_W = 0.38, PLAYER_HALF_L = 0.9;
 const ROAD_TILE = 30;          // 道路の模様1枚ぶんの長さ
 
@@ -504,7 +504,7 @@ function deactivate(o) { o.active = false; o.group.visible = false; }
 /* ---------- 状態 ---------- */
 let state = "ready"; // ready | playing | over
 let speed = SPEED_START, playTime = 0, distance = 0;
-let playerX = 0, targetX = 0, dragging = false, lean = 0;
+let playerX = 0, playerVX = 0, targetX = 0, dragging = false, lean = 0;
 let lives = LIVES_START, invT = 0, shake = 0;
 let crankAng = 1.0, camX = 0, rowAcc = 0, nextGap = 40, time = 0;
 let best = store.get("best", 0);
@@ -522,7 +522,7 @@ function renderLives() {
 function startGame() {
   state = "playing";
   speed = SPEED_START; playTime = 0; distance = 0;
-  playerX = 0; targetX = 0; lean = 0;
+  playerX = 0; playerVX = 0; targetX = 0; lean = 0;
   lives = LIVES_START; invT = 0; shake = 0;
   rowAcc = 0; nextGap = 40;
   allObs.forEach(deactivate);
@@ -632,11 +632,10 @@ function update(dt) {
     updateObstacles(dt);
     if (invT > 0) invT -= dt;
 
-    // 指へ少し遅れて追いつき、動く向きへ体を傾ける
-    const prevX = playerX;
-    playerX += (targetX - playerX) * (1 - Math.exp(-FOLLOW * dt));
-    const vx = (playerX - prevX) / Math.max(dt, 0.0001);
-    lean += (clamp(-vx * 0.075, -0.55, 0.55) - lean) * (1 - Math.exp(-12 * dt));
+    // 重さのあるばねで指の位置へ引っ張る：動き出しはゆっくり、ぬるっと加速して、行き過ぎずに止まる
+    playerVX += (FOLLOW_W * FOLLOW_W * (targetX - playerX) - 2 * FOLLOW_W * playerVX) * dt;
+    playerX = clamp(playerX + playerVX * dt, -PLAYER_LIMIT, PLAYER_LIMIT);
+    lean += (clamp(-playerVX * 0.075, -0.55, 0.55) - lean) * (1 - Math.exp(-12 * dt));
     crankAng += speed * dt * 0.55;
     poseCyclist(player, crankAng, speed * dt / WHEEL_R);
   } else if (state === "ready") {
