@@ -675,16 +675,34 @@ function toTarget(clientX) {
   const f = clientX / (window.innerWidth || 1);
   targetX = clamp((f - 0.5) * 2 * PLAYER_LIMIT * 1.2, -PLAYER_LIMIT, PLAYER_LIMIT);
 }
+let activeId = null; // 最初に触れた指だけで操作する（2本目以降の指は無視）
 window.addEventListener("pointerdown", (e) => {
-  if (e.target.closest && e.target.closest("#announce, #over, button")) return;
+  if (activeId !== null || (e.target.closest && e.target.closest("#announce, #over, #pause, button"))) return;
   if (state === "ready") startGame();
   if (state !== "playing") return;
+  activeId = e.pointerId;
   dragging = true;
   toTarget(e.clientX);
 });
-window.addEventListener("pointermove", (e) => { if (dragging && state === "playing") toTarget(e.clientX); });
-window.addEventListener("pointerup", () => { dragging = false; });
-window.addEventListener("pointercancel", () => { dragging = false; });
+window.addEventListener("pointermove", (e) => { if (e.pointerId === activeId && dragging && state === "playing") toTarget(e.clientX); });
+window.addEventListener("pointerup", (e) => { if (e.pointerId === activeId) { activeId = null; dragging = false; } });
+window.addEventListener("pointercancel", (e) => { if (e.pointerId === activeId) { activeId = null; dragging = false; } });
+
+// ほかのアプリに切り替えたり通知を開いたりしたら、触っていた指を解除して一時停止
+function pauseGame() {
+  activeId = null; dragging = false;
+  if (state !== "playing") return;
+  state = "paused";
+  document.getElementById("pause").hidden = false;
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) pauseGame(); });
+window.addEventListener("blur", pauseGame);
+window.addEventListener("pagehide", pauseGame);
+document.getElementById("resume-btn").addEventListener("click", () => {
+  document.getElementById("pause").hidden = true;
+  state = "playing";
+  clock.getDelta(); // 止まっていた時間ぶん一気に進まないように
+});
 document.getElementById("start-btn").addEventListener("click", startGame);
 document.getElementById("retry-btn").addEventListener("click", startGame);
 document.getElementById("best-ready").textContent = best;

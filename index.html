@@ -39,8 +39,17 @@
       <button type="button" id="retry-btn" class="btn">もう一度</button>
     </div>
   </div>
+
+  <div id="pause" class="overlay" hidden>
+    <div class="card">
+      <h1>一時停止中</h1>
+      <p>ほかのアプリを開いたため、止めています。</p>
+      <button type="button" id="resume-btn" class="btn">つづける</button>
+    </div>
+  </div>
 </div>
 
+<script src="guard.js"></script>
 <script src="announce.js"></script>
 <script type="module" src="game.js"></script>
 </body>
