@@ -473,7 +473,7 @@ function buildOncomingBike() {
 
 const pool = { car: [], van: [], bus: [], bike: [] };
 const allObs = [];
-[["car", 12], ["van", 5], ["bus", 3], ["bike", 7]].forEach(([kind, n]) => {
+[["car", 16], ["van", 6], ["bus", 3], ["bike", 9]].forEach(([kind, n]) => {
   for (let i = 0; i < n; i++) {
     const o = kind === "bike" ? buildOncomingBike() : buildVehicle(kind);
     o.active = false;
@@ -484,10 +484,20 @@ const allObs = [];
   }
 });
 
+let lastFree = [0, 1, 2]; // 直前の列で空いていた車線（番号）
 function spawnRow(z) {
-  const n = Math.random() < 0.55 ? 1 : 2; // 3車線すべてをふさがない
-  const lanes = LANES.slice().sort(() => Math.random() - 0.5).slice(0, n);
-  lanes.forEach((x) => {
+  const ratio = clamp((speed - SPEED_START) / (SPEED_MAX - SPEED_START), 0, 1);
+  const n = Math.random() < 0.4 + 0.25 * ratio ? 2 : 1; // 速くなるほど2車線ふさぎが増える（3車線すべてはふさがない）
+  let blocked, free;
+  // 前の列で空いていた車線のとなりまでには、必ず空きを作る（端から端への大移動を強いない）
+  for (let tries = 0; tries < 8; tries++) {
+    blocked = [0, 1, 2].sort(() => Math.random() - 0.5).slice(0, n);
+    free = [0, 1, 2].filter((i) => !blocked.includes(i));
+    if (free.some((f) => lastFree.some((p) => Math.abs(f - p) <= 1))) break;
+  }
+  lastFree = free;
+  blocked.forEach((li) => {
+    const x = LANES[li];
     const r = Math.random();
     const kind = r < 0.5 ? "car" : r < 0.75 ? "bike" : r < 0.92 ? "van" : "bus";
     const o = pool[kind].find((p) => !p.active);
@@ -524,9 +534,9 @@ function startGame() {
   speed = SPEED_START; playTime = 0; distance = 0;
   playerX = 0; playerVX = 0; targetX = 0; lean = 0;
   lives = LIVES_START; invT = 0; shake = 0;
-  rowAcc = 0; nextGap = 40;
+  rowAcc = 0; nextGap = 30; lastFree = [0, 1, 2];
   allObs.forEach(deactivate);
-  for (let z = -100; z > SPAWN_Z; z -= 42) spawnRow(z); // 走り出してすぐぶつからないよう、最初の列は少し先から
+  for (let z = -100; z > SPAWN_Z; z -= 32) spawnRow(z); // 走り出してすぐぶつからないよう、最初の列は少し先から
   renderLives();
   document.getElementById("ready").hidden = true;
   document.getElementById("over").hidden = true;
@@ -627,7 +637,7 @@ function update(dt) {
     if (rowAcc >= nextGap) {
       rowAcc = 0;
       spawnRow(SPAWN_Z);
-      nextGap = clamp(42 - speed * 0.3, 27, 42) + rnd(-3, 3);
+      nextGap = clamp(32 - speed * 0.25, 20, 32) + rnd(-2.5, 2.5);
     }
     updateObstacles(dt);
     if (invT > 0) invT -= dt;
