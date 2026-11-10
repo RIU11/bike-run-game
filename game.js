@@ -17,20 +17,24 @@
   window.addEventListener("resize", resize);
 
   /* ---------- 定数 ---------- */
-  var FOCAL = 60;            // 小さいほど遠近感が強い
+  var FOCAL = 52;            // 小さいほど遠近感が強い
   var ROAD_HALF = 3;         // 道の半幅（ワールド単位）
+  var SIDEWALK_W = 0.6;      // 歩道の幅（ワールド単位）
   var LANES = [-1.8, 0, 1.8];
   var SPAWN_AHEAD = 140;     // 新しい障害物を置く、プレイヤーから見た先の距離
-  var BASE_INTERVAL = 46, MIN_INTERVAL = 22, INTERVAL_K = 0.9;
-  var SPEED_START = 8, SPEED_MAX = 30, ACCEL = 0.14;
+  var BASE_INTERVAL = 46, MIN_INTERVAL = 26, INTERVAL_K = 0.9;
+  var SPEED_START = 10, SPEED_MAX = 85, ACCEL_K = 0.012; // 指数的に最高速へ近づく＝後半ほど速くなる
   var LIVES_START = 3;
   var HIT_WINDOW = 1.1;      // この距離差の間だけ当たり判定を見る
   var INVINCIBLE_SEC = 1.2;
   var PLAYER_RADIUS = 0.55, OBSTACLE_RADIUS = 0.6;
+  var BUILDING_INTERVAL = 11;
+  var CITY_COLORS = ["#525c70", "#5a6478", "#6b5b53", "#4f6168", "#565a72", "#47536a", "#5f5248"];
 
+  var PERSP_K = 0.27;
   function perspX(worldX, aheadZ) {
     var scale = FOCAL / (aheadZ + FOCAL);
-    return { x: W / 2 + worldX * scale * (W * 0.46), scale: scale };
+    return { x: W / 2 + worldX * scale * (W * PERSP_K), scale: scale };
   }
   function groundY(scale) {
     var horizon = H * 0.38;
@@ -45,6 +49,8 @@
   var pedalPhase = 0;
   var obstacles = []; // {z, lane}
   var nextSpawnZ = SPAWN_AHEAD;
+  var buildings = []; // {z, side, height, width, color}
+  var nextBuildingZ = 10;
   var best = store.get("best", 0);
 
   function resetGame() {
@@ -53,6 +59,7 @@
     playerX = 0; targetX = 0;
     lives = LIVES_START; invTimer = 0;
     obstacles = []; nextSpawnZ = SPAWN_AHEAD;
+    buildings = []; nextBuildingZ = 10;
     renderLives();
     document.getElementById("over").hidden = true;
     document.getElementById("ready").hidden = true;
@@ -82,17 +89,34 @@
     }
   }
 
+  function spawnBuildingsIfNeeded() {
+    while (nextBuildingZ < playerZ + SPAWN_AHEAD + 40) {
+      [-1, 1].forEach(function (side) {
+        buildings.push({
+          z: nextBuildingZ + (Math.random() * 6 - 3),
+          side: side,
+          height: 5 + Math.random() * 16,
+          width: 1.6 + Math.random() * 1.4,
+          color: CITY_COLORS[Math.floor(Math.random() * CITY_COLORS.length)]
+        });
+      });
+      nextBuildingZ += BUILDING_INTERVAL;
+    }
+  }
+
   function update(dt) {
     if (state !== "playing") return;
     playTime += dt;
-    speed = Math.min(SPEED_MAX, SPEED_START + ACCEL * playTime);
+    speed = SPEED_MAX - (SPEED_MAX - SPEED_START) * Math.exp(-ACCEL_K * playTime);
     playerZ += speed * dt;
-    pedalPhase += speed * dt * 2.2;
+    pedalPhase += speed * dt * 2.6;
     playerX = targetX;
     if (invTimer > 0) invTimer -= dt;
 
     spawnIfNeeded();
+    spawnBuildingsIfNeeded();
     obstacles = obstacles.filter(function (o) { return o.z > playerZ - 6; });
+    buildings = buildings.filter(function (b) { return b.z > playerZ - 20; });
 
     if (invTimer <= 0) {
       for (var i = 0; i < obstacles.length; i++) {
@@ -122,24 +146,82 @@
   }
 
   /* ---------- 描画 ---------- */
+  var SKYLINE = (function () {
+    var arr = [];
+    for (var i = 0; i < 16; i++) arr.push({ x: i / 16, w: 0.5 + Math.random() * 0.9, h: 0.25 + Math.random() * 0.55 });
+    return arr;
+  })();
+
+  function drawSky() {
+    var horizonY = H * 0.38;
+    var grad = ctx.createLinearGradient(0, 0, 0, horizonY);
+    grad.addColorStop(0, "#0e1830"); grad.addColorStop(1, "#30507e");
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, horizonY);
+
+    // 地面側のベース塗り（毎フレームの下地。これより後に建物・道を上から重ねて描く）
+    ctx.fillStyle = "#23262f";
+    ctx.fillRect(0, horizonY, W, H - horizonY);
+
+    // 遠くの街並みのシルエット（ゆっくり流れる）
+    var shift = (playerZ * 0.003) % 1;
+    ctx.fillStyle = "rgba(10,16,32,.55)";
+    SKYLINE.forEach(function (b) {
+      var x = ((b.x - shift) % 1 + 1) % 1;
+      var bw = b.w * (W / 10);
+      var bh = b.h * horizonY * 0.6;
+      ctx.fillRect(x * W - bw / 2, horizonY - bh, bw, bh);
+      if (x * W - bw / 2 + bw > W) ctx.fillRect(x * W - bw / 2 - W, horizonY - bh, bw, bh);
+    });
+  }
+
+  function drawBuildings() {
+    var sorted = buildings.slice().sort(function (a, b) { return b.z - a.z; });
+    var k = W * PERSP_K;
+    sorted.forEach(function (b) {
+      var rel = b.z - playerZ;
+      if (rel < -15 || rel > SPAWN_AHEAD + 60) return;
+      var baseX = ROAD_HALF + SIDEWALK_W;
+      var centerWorldX = b.side * (baseX + b.width / 2);
+      var p = perspX(centerWorldX, Math.max(rel, 0.01));
+      var scaleW = b.width * p.scale * k;
+      if (scaleW < 1.5) return;
+      var y0 = groundY(p.scale);
+      var topY = y0 - b.height * p.scale * k * 0.55;
+      ctx.fillStyle = b.color;
+      ctx.fillRect(p.x - scaleW / 2, topY, scaleW, y0 - topY);
+      if (scaleW > 16) {
+        var rows = Math.max(1, Math.round((y0 - topY) / (scaleW * 0.4)));
+        var cols = Math.max(1, Math.round(scaleW / (scaleW * 0.35)));
+        ctx.fillStyle = "rgba(255,230,160,.35)";
+        for (var r = 0; r < rows; r++) {
+          for (var c = 0; c < cols; c++) {
+            var wx = p.x - scaleW / 2 + scaleW * (0.18 + c * 0.64 / Math.max(1, cols - 1 || 1));
+            var wy = topY + (y0 - topY) * (0.15 + r * 0.7 / Math.max(1, rows - 1 || 1));
+            ctx.fillRect(wx, wy, scaleW * 0.14, scaleW * 0.14);
+          }
+        }
+      }
+    });
+  }
+
   function drawRoad() {
-    ctx.fillStyle = "#13203a";
-    ctx.fillRect(0, 0, W, H * 0.4);
-    var grad = ctx.createLinearGradient(0, 0, 0, H * 0.4);
-    grad.addColorStop(0, "#0e1830"); grad.addColorStop(1, "#2c4873");
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H * 0.4);
-
-    ctx.fillStyle = "#1f2a1c";
-    ctx.fillRect(0, H * 0.38, W, H * 0.62);
-
     var steps = 40;
     for (var i = steps; i >= 1; i--) {
       var z0 = (i / steps) * SPAWN_AHEAD * 0.9, z1 = ((i - 1) / steps) * SPAWN_AHEAD * 0.9;
       var p0 = perspX(0, z0), p1 = perspX(0, z1);
       var y0 = groundY(p0.scale), y1 = groundY(p1.scale);
-      var hw0 = ROAD_HALF * p0.scale * (W * 0.46), hw1 = ROAD_HALF * p1.scale * (W * 0.46);
-      var bandOffset = Math.floor((playerZ + z0) / 6) % 2;
-      ctx.fillStyle = bandOffset === 0 ? "#30323a" : "#3a3c46";
+      var k = W * PERSP_K;
+      var sw0 = (ROAD_HALF + SIDEWALK_W) * p0.scale * k, sw1 = (ROAD_HALF + SIDEWALK_W) * p1.scale * k;
+      var hw0 = ROAD_HALF * p0.scale * k, hw1 = ROAD_HALF * p1.scale * k;
+
+      ctx.fillStyle = "#8a8d95";
+      ctx.beginPath();
+      ctx.moveTo(p0.x - sw0, y0); ctx.lineTo(p0.x + sw0, y0);
+      ctx.lineTo(p1.x + sw1, y1); ctx.lineTo(p1.x - sw1, y1);
+      ctx.closePath(); ctx.fill();
+
+      var bandOffset = Math.floor((playerZ + z0) / 4) % 2;
+      ctx.fillStyle = bandOffset === 0 ? "#2d2f38" : "#363843";
       ctx.beginPath();
       ctx.moveTo(p0.x - hw0, y0); ctx.lineTo(p0.x + hw0, y0);
       ctx.lineTo(p1.x + hw1, y1); ctx.lineTo(p1.x - hw1, y1);
@@ -147,39 +229,74 @@
     }
   }
 
-  function drawBike(screenX, screenY, scale, pedal, idle, flash) {
-    var s = scale * (W * 0.075);
+  function drawSpeedLines(speedRatio) {
+    if (speedRatio < 0.3) return;
+    var n = Math.floor(8 + speedRatio * 16);
+    var cx = W / 2, cy = H * 0.42;
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    for (var i = 0; i < n; i++) {
+      var ang = (i / n) * Math.PI * 2;
+      var flicker = 0.5 + 0.5 * Math.sin(playerZ * 2.3 + i * 2.1);
+      var len = (0.18 + 0.5 * speedRatio * flicker) * Math.max(W, H);
+      var x1 = cx + Math.cos(ang) * (W * 0.18), y1 = cy + Math.sin(ang) * (H * 0.18);
+      var x2 = cx + Math.cos(ang) * len, y2 = cy + Math.sin(ang) * len;
+      ctx.strokeStyle = "rgba(255,255,255," + (0.05 + 0.18 * speedRatio * flicker) + ")";
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // キャラは奥（画面の先）へ向かって走る＝プレイヤーからは「後ろ姿」が見える構図
+  function drawBike(screenX, groundY, scale, pedal, idle, flash, leanRatio) {
+    var s = scale * (W * 0.1);
     if (flash && Math.floor(invTimer * 10) % 2 === 0) ctx.globalAlpha = 0.35;
 
-    ctx.strokeStyle = "#e9ecf5"; ctx.fillStyle = "#e9ecf5";
-    ctx.lineWidth = Math.max(2, s * 0.09);
+    var compress = 1 - (idle ? 0 : leanRatio) * 0.18; // 速いほど前傾姿勢で少し縮む
+    var hipY = groundY - s * 0.95 * compress;
+    var shoulderY = groundY - s * 1.85 * compress;
+    var headY = groundY - s * 2.3 * compress;
+    var hipL = screenX - s * 0.2, hipR = screenX + s * 0.2;
+    var shL = screenX - s * 0.42, shR = screenX + s * 0.42;
 
-    var wheelR = s * 0.55;
-    var backX = screenX - s * 0.75, frontX = screenX + s * 0.75, wheelY = screenY;
-    ctx.beginPath(); ctx.arc(backX, wheelY, wheelR, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(frontX, wheelY, wheelR, 0, Math.PI * 2); ctx.stroke();
+    // 後輪のヒント（脚の下にのぞく影）
+    ctx.fillStyle = "#15161c";
+    ctx.beginPath(); ctx.ellipse(screenX, groundY, s * 0.5, s * 0.16, 0, 0, Math.PI * 2); ctx.fill();
 
-    var seatX = screenX - s * 0.25, seatY = screenY - s * 1.1;
-    var barX = screenX + s * 0.55, barY = screenY - s * 1.0;
-    var crankX = screenX, crankY = screenY - s * 0.08;
+    // 脚（ペダリング：左右交互に上下する）
+    var phaseL = idle ? Math.PI * 0.5 : pedal;
+    var phaseR = idle ? Math.PI * 1.5 : pedal + Math.PI;
+    ctx.strokeStyle = "#2c3550"; ctx.lineWidth = Math.max(2, s * 0.16); ctx.lineCap = "round";
+    [[hipL, phaseL], [hipR, phaseR]].forEach(function (leg) {
+      var hipX = leg[0], ph = leg[1];
+      var footY = groundY - s * 0.1 + Math.sin(ph) * s * 0.3;
+      var footX = hipX + Math.cos(ph) * s * 0.18;
+      var kneeX = hipX + (footX - hipX) * 0.5 + Math.sin(ph) * s * 0.1;
+      var kneeY = (hipY + footY) / 2;
+      ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.lineTo(footX, footY); ctx.stroke();
+    });
+
+    // 腰〜肩（後ろ姿の胴体、肩幅が腰幅より広い台形）
+    ctx.fillStyle = "#ff6b4a";
     ctx.beginPath();
-    ctx.moveTo(backX, wheelY); ctx.lineTo(seatX, seatY);
-    ctx.lineTo(barX, barY); ctx.lineTo(frontX, wheelY);
-    ctx.moveTo(seatX, seatY); ctx.lineTo(crankX, crankY);
-    ctx.stroke();
+    ctx.moveTo(shL, shoulderY); ctx.lineTo(shR, shoulderY);
+    ctx.lineTo(hipR, hipY); ctx.lineTo(hipL, hipY);
+    ctx.closePath(); ctx.fill();
 
-    // 体
-    var headY = seatY - s * 0.95;
-    ctx.beginPath(); ctx.arc(seatX + s * 0.05, headY, s * 0.26, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(seatX + s * 0.05, headY + s * 0.26); ctx.lineTo(barX - s * 0.1, seatY + s * 0.05); ctx.stroke();
+    // 腕とハンドルを握る手
+    ctx.strokeStyle = "#2c3550"; ctx.lineWidth = Math.max(2, s * 0.14);
+    var barY = groundY - s * 1.25 * compress;
+    ctx.beginPath(); ctx.moveTo(shL, shoulderY + s * 0.1); ctx.lineTo(screenX - s * 0.95, barY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(shR, shoulderY + s * 0.1); ctx.lineTo(screenX + s * 0.95, barY); ctx.stroke();
+    ctx.fillStyle = "#2c3550";
+    ctx.beginPath(); ctx.arc(screenX - s * 0.95, barY, s * 0.13, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(screenX + s * 0.95, barY, s * 0.13, 0, Math.PI * 2); ctx.fill();
 
-    // 脚（ペダリング）
-    var a = idle ? 0.7 : pedal;
-    var legR = s * 0.42;
-    var footBX = crankX + Math.cos(a) * legR, footBY = crankY + Math.sin(a) * legR * 0.5 + s * 0.15;
-    var footFX = crankX + Math.cos(a + Math.PI) * legR, footFY = crankY + Math.sin(a + Math.PI) * legR * 0.5 + s * 0.15;
-    ctx.beginPath(); ctx.moveTo(seatX + s * 0.05, headY + s * 0.26); ctx.lineTo(footBX, footBY); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(seatX + s * 0.05, headY + s * 0.26); ctx.lineTo(footFX, footFY); ctx.stroke();
+    // 頭（ヘルメット）
+    ctx.fillStyle = "#223a66";
+    ctx.beginPath(); ctx.arc(screenX, headY, s * 0.34, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd36b";
+    ctx.beginPath(); ctx.arc(screenX, headY + s * 0.05, s * 0.2, 0, Math.PI * 2); ctx.fill();
 
     ctx.globalAlpha = 1;
   }
@@ -202,18 +319,23 @@
   }
 
   function render() {
+    drawSky();
+    drawBuildings();
     drawRoad();
     var sorted = obstacles.slice().sort(function (a, b) { return b.z - a.z; });
     sorted.forEach(drawObstacle);
 
+    var speedRatio = clamp((speed - SPEED_START) / (SPEED_MAX - SPEED_START), 0, 1);
+    drawSpeedLines(speedRatio);
+
     var ground = groundY(1);
     var flash = invTimer > 0;
-    drawBike(W / 2 + playerX * (W * 0.46) * 1, ground, 1, pedalPhase, state === "ready", flash);
+    drawBike(W / 2 + playerX * (W * PERSP_K), ground, 1, pedalPhase, state === "ready", flash, speedRatio);
   }
 
   /* ---------- 入力 ---------- */
   function screenToWorldX(sx) {
-    return (sx - W / 2) / (W * 0.46);
+    return (sx - W / 2) / (W * PERSP_K);
   }
   canvas.addEventListener("pointerdown", function (e) {
     if (state === "ready") { resetGame(); }
