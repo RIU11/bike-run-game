@@ -9,6 +9,8 @@ body{
 }
 #stage{position:fixed;inset:0;overflow:hidden}
 #game{position:absolute;inset:0;width:100%;height:100%;display:block}
+#hitflash{position:absolute;inset:0;background:rgba(255,50,50,.38);opacity:0;pointer-events:none;transition:opacity .4s;z-index:3}
+#hitflash.on{opacity:1;transition:none}
 
 #hud{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;
   padding:calc(12px + env(safe-area-inset-top,0px)) 16px 0;pointer-events:none;z-index:2}
