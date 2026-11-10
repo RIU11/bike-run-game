@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#1a2744">
+<meta name="robots" content="noindex,nofollow">
+<title>自転車ラン</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="rotate" class="overlay" hidden>
+  <p>縦向きでお使いください</p>
+</div>
+
+<div id="stage">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="dist">0 m</div>
+    <div id="lives"></div>
+  </div>
+
+  <div id="ready" class="overlay">
+    <div class="card">
+      <h1>自転車ラン</h1>
+      <p>画面をタップしてスタート。<br>長押ししながら指をスライドすると、その位置へ進みます。</p>
+      <p class="best">自己ベスト：<span id="best-ready">0</span> m</p>
+      <button type="button" id="start-btn" class="btn">タップしてスタート</button>
+    </div>
+  </div>
+
+  <div id="over" class="overlay" hidden>
+    <div class="card">
+      <h1>ゲームオーバー</h1>
+      <p class="score">今回：<span id="dist-final">0</span> m</p>
+      <p class="best">自己ベスト：<span id="best-final">0</span> m</p>
+      <button type="button" id="retry-btn" class="btn">もう一度</button>
+    </div>
+  </div>
+</div>
+
+<script src="announce.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
